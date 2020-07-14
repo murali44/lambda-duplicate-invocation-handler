@@ -1,0 +1,95 @@
+service: lambda-duplicate-invocation-handler
+Description: Identify and handle duplicate lambda invocations.
+
+frameworkVersion: '>=1.64.0 <=1.74.0'
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  stackName: ${self:custom.stage}-${self:service.name}
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: dev
+  region: us-east-1 # N. Virginia
+  logRetentionInDays: 7
+  stackTags:
+    APP: lambda-duplicate-invocation-handler
+    STAGE: ${self:custom.stage}
+
+functions:
+  ExampleLambda:
+    name: ${self:custom.stackName}-ExampleLambda
+    description: Example lambda.
+    handler: src/lambda.handler
+    memorySize: 256
+    timeout: 10
+    role: ExampleLambdaRole
+    events:
+    - http:
+        path: /
+        method: post
+    environment:
+      EVENTS_TABLE: !Ref EventsTable
+
+package:
+  exclude:
+    - node_modules/**
+    - package.json
+    - package-lock.json
+    - test/**
+    - README.md
+
+resources:
+  Resources:
+    EventsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.stackName}-Events
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: LambdaName#EventID
+            AttributeType: S
+        KeySchema:
+          - AttributeName: LambdaName#EventID
+            KeyType: HASH
+        TimeToLiveSpecification:
+          AttributeName: 'Expires'
+          Enabled: true
+    ExampleLambdaRole:
+      Properties:
+        AssumeRolePolicyDocument:
+          Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+          Version: '2012-10-17'
+        Path: /
+        Policies:
+        - PolicyDocument:
+            Statement:
+            - Action:
+              - dynamodb:PutItem
+              - dynamodb:GetItem
+              Effect: Allow
+              Resource:
+                - Fn::GetAtt: [EventsTable, Arn]
+            - Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - logs:CreateLogGroup
+              Effect: Allow
+              Resource:
+                - 'Fn::Join':
+                  - ':'
+                  -
+                    - 'arn:aws:logs'
+                    - Ref: 'AWS::Region'
+                    - Ref: 'AWS::AccountId'
+                    - 'log-group:/aws/lambda/${self:custom.stackName}-ExampleLambda:*'
+            Version: '2012-10-17'
+          PolicyName: ${self:custom.stackName}-ExampleLambda-GeneratedRoles
+        RoleName: ${self:custom.stackName}-ExampleLambda
+      Type: AWS::IAM::Role
+  
